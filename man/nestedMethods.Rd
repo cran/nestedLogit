@@ -14,9 +14,11 @@
 \alias{as.matrix.continuationDichotomies}
 \alias{as.character.dichotomies}
 \alias{as.matrix.dichotomies}
-\alias{print.predictDichotomies}
+\alias{print.predictNestedLogit}
+\alias{confint.predictNestedLogit}
 \alias{fitted.nestedLogit}
 \alias{as.dichotomies}
+\alias{print.predictDichotomies}
 \title{Methods for \code{"nestedLogit"} and Related Objects}
 \usage{
 \method{print}{nestedLogit}(x, ...)
@@ -29,7 +31,17 @@
 
 \method{predict}{nestedLogit}(object, newdata, model = c("nested", "dichotomies"), ...)
 
-\method{print}{predictDichotomies}(x, ...)
+\method{print}{predictNestedLogit}(x, n = min(10L, nrow(x$p)), ...)
+
+\method{confint}{predictNestedLogit}(
+  object,
+  parm = c("prob", "logit"),
+  level = 0.95,
+  conf.limits.logit = TRUE,
+  ...
+)
+
+\method{print}{predictDichotomies}(x, n = 10L, ...)
 
 \method{fitted}{nestedLogit}(object, model = c("nested", "dichotomies"), ...)
 
@@ -62,6 +74,19 @@ under the nested logit model are returned, or \code{"dichotomies"}, in which cas
 \code{\link{predict.glm}} is invoked for each binary logit model fit to the nested
 dichotomies and a named list of the results is returned.}
 
+\item{n}{For the print method of \code{predict.nestedLogit}
+or \code{predictDichotomies}, an integer or \code{"all"}
+to control how many rows are printed for each of the probabilities of
+response categories, corresponding logits and their standard errors.}
+
+\item{parm}{For the \code{confint} method, one of \code{"prob"} or \code{"logit"},
+indicating whether to generate confidence intervals for probabilities or logits
+of the responses.}
+
+\item{level}{Confidence level for the \code{confint} method}
+
+\item{conf.limits.logit}{When \code{parm = "prob"} ?????}
+
 \item{as.matrix}{if \code{TRUE} (the default for \code{coef}) return coefficients
 as a matrix with one column for each nested dichotomy,
 or coefficient covariances as a matrix with one row and column for each
@@ -88,7 +113,6 @@ derived from the original nested-logit model.
 \item The \code{predict} and \code{fitted} methods return either a matrix of predicted probabilities or an
 object of class \code{"predictDichotomies"}, which is a named list with predicted logits for
 each nested-dichotomy model.
-\item The \code{glance} and \code{tidy} methods return 'tibbles' containing model summaries.
 \item The \code{summary} method returns an object of class \code{"summary.nestedLogit"}, which is
 a list of summaries of the \code{\link{glm}} objects that comprise the nested-dichotomies model; the
 object is normally printed.
@@ -105,6 +129,8 @@ Most of these are the standard methods for a model-fitting function.
 \item{\code{update}}{Re-fit a \code{"nestedLogit"} model with a change in any of the \code{formula}, \code{dichotomies},
 \code{data}, \code{subset}, or \code{contrasts}, arguments.}
 \item{\code{predict}, \code{fitted}}{Computes predicted values from a fitted \code{"nestedLogit"} model.}
+\item{\code{confint}}{Compute point-wise confidence limits for predicted response-category
+probabilities or logits.}
 \item{\code{glance}}{Construct a single row summaries for the dichotomies \code{"nestedLogit"} model.}
 \item{\code{tidy}}{Summarizes the terms in \code{"nestedLogit"} model.}
 }
@@ -142,18 +168,17 @@ broom::glance(m)
 broom::tidy(m)
 
 # predicted probabilities and ploting
-head(predict(m)) # fitted probabilities for first few cases; 
-                 # equivalent to head(fitted(m))
+predict(m) # fitted probabilities for first few cases;
+
 new <- expand.grid(parentdeg=c("l.t.highschool",  "highschool",
                                "college", "graduate"),
                    year=c(1972, 2016))
 fit <- predict(m, newdata=new)
 cbind(new, fit) # fitted probabilities at specific values of predictors
 
-# predicted logits
-predictions <- predict(m, newdata=new, model="dichotomies", se.fit=TRUE)
+# predicted logits for dichotomies
+predictions <- predict(m, newdata=new, model="dichotomies")
 predictions
-predictions$above_l.t.highschool # on logit scale
 
 }
 \seealso{

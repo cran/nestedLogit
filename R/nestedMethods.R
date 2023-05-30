@@ -4,7 +4,8 @@
 #' @aliases nestedMethods print.nestedLogit summary.nestedLogit print.summary.nestedLogit
 #' update.nestedLogit predict.nestedLogit coef.nestedLogit vcov.nestedLogit print.dichotomies
 #' as.dichotomies.matrix as.matrix.continuationDichotomies as.character.dichotomies
-#' as.matrix.dichotomies
+#' as.matrix.dichotomies print.predictNestedLogit confint.predictNestedLogit
+#' fitted.nestedLogit as.dichotomies predict.nestedLogit
 #'
 #' @description Various methods for processing \code{"nestedLogit"} and related objects.
 #' Most of these are the standard methods for a model-fitting function.
@@ -13,6 +14,8 @@
 #'   \item{\code{update}}{Re-fit a \code{"nestedLogit"} model with a change in any of the \code{formula}, \code{dichotomies},
 #'        \code{data}, \code{subset}, or \code{contrasts}, arguments.}
 #'   \item{\code{predict}, \code{fitted}}{Computes predicted values from a fitted \code{"nestedLogit"} model.}
+#'   \item{\code{confint}}{Compute point-wise confidence limits for predicted response-category
+#'        probabilities or logits.}
 #'   \item{\code{glance}}{Construct a single row summaries for the dichotomies \code{"nestedLogit"} model.}
 #'   \item{\code{tidy}}{Summarizes the terms in \code{"nestedLogit"} model.}
 #' }
@@ -44,8 +47,17 @@
 #' @param data optional updated data argument
 #' @param subset optional updated subset argument.
 #' @param contrasts optional updated contrasts argument.
+#' @param n For the print method of \code{predict.nestedLogit}
+#'        or \code{predictDichotomies}, an integer or \code{"all"}
+#'        to control how many rows are printed for each of the probabilities of
+#'        response categories, corresponding logits and their standard errors.
+#' @param parm  For the \code{confint} method, one of \code{"prob"} or \code{"logit"},
+#'        indicating whether to generate confidence intervals for probabilities or logits
+#'        of the responses.
+#' @param  level Confidence level for the \code{confint} method
+#' @param conf.limits.logit When \code{parm = "prob"} ?????
 #' @param \dots arguments to be passed down.
-#' 
+#'
 #' @return  \itemize{
 #'    \item The \code{coef} and \code{vcov} methods return either matrices or lists of regression
 #'    coefficients and their covariances, respectively.
@@ -54,7 +66,6 @@
 #'    \item The \code{predict} and \code{fitted} methods return either a matrix of predicted probabilities or an
 #'    object of class \code{"predictDichotomies"}, which is a named list with predicted logits for
 #'    each nested-dichotomy model.
-#'    \item The \code{glance} and \code{tidy} methods return 'tibbles' containing model summaries.
 #'    \item The \code{summary} method returns an object of class \code{"summary.nestedLogit"}, which is
 #'    a list of summaries of the \code{\link{glm}} objects that comprise the nested-dichotomies model; the
 #'    object is normally printed.
@@ -92,18 +103,17 @@
 #' broom::tidy(m)
 #'
 #' # predicted probabilities and ploting
-#' head(predict(m)) # fitted probabilities for first few cases; 
-#'                  # equivalent to head(fitted(m))
+#' predict(m) # fitted probabilities for first few cases;
+#'
 #' new <- expand.grid(parentdeg=c("l.t.highschool",  "highschool",
 #'                                "college", "graduate"),
 #'                    year=c(1972, 2016))
 #' fit <- predict(m, newdata=new)
 #' cbind(new, fit) # fitted probabilities at specific values of predictors
 #'
-#' # predicted logits
-#' predictions <- predict(m, newdata=new, model="dichotomies", se.fit=TRUE)
+#' # predicted logits for dichotomies
+#' predictions <- predict(m, newdata=new, model="dichotomies")
 #' predictions
-#' predictions$above_l.t.highschool # on logit scale
 #'
 #' @rdname nestedMethods
 #' @export
@@ -121,7 +131,7 @@ print.nestedLogit <- function(x, ...) {
 summary.nestedLogit <- function(object, ...) {
   result <- lapply(models(object), summary, ...)
   for (i in seq_along(result)) {
-    result[[i]]$dichotomy <- models(object, i)$dichotomy 
+    result[[i]]$dichotomy <- models(object, i)$dichotomy
   }
   class(result) <- "summary.nestedLogit"
   attr(result, "formula") <- object$formula
@@ -177,37 +187,70 @@ print.dichotomies <- function(x, ...) {
 #' @export
 predict.nestedLogit <- function(object, newdata, model=c("nested", "dichotomies"), ...) {
   model <- match.arg(model)
+
+  if (missing(newdata))
+    newdata <- models(object, 1)$data
+
   if (model == "nested"){
-    if (missing(newdata))
-      newdata <- models(object, 1)$data
+
     ndichot <- length(models(object))
     if (ndichot < 2L)
       stop("there are fewer than 2 nested dichotomies")
-    fitted <- vector(ndichot, mode = "list")
-    for (i in seq_along(models(object))) {
-      p <- predict(models(object, i), newdata = newdata, type = "response")
-      p <- cbind(1 - p, p)
-      attr(p, "columns") <- models(object, i)$dichotomy 
-      fitted[[i]] <- p
+
+    var.fitted <- fitted <- vector(ndichot, mode = "list")
+    for (j in seq_along(models(object))) {
+      pred <- predict(models(object, j), newdata = newdata, type = "response",
+                      se.fit=TRUE)
+      p <- cbind(1 - pred$fit, pred$fit)
+      attr(p, "columns") <- models(object, j)$dichotomy
+      fitted[[j]] <- p
+      var.fitted[[j]] <- (pred$se.fit)^2
     }
-    response.levels <-
-      unique(unlist(lapply(fitted, function(x)
-        attr(x, "columns"))))
+
+    response.levels <- unique(unlist(lapply(fitted, function(x) attr(x, "columns"))))
     p <- matrix(1, nrow(newdata), length(response.levels))
-    colnames(p) <- response.levels
-    for (level in response.levels) {
-      for (i in seq_along(models(object))) {
-        which <- sapply(models(object, i)$dichotomy, function(x)  
-          level %in% x)
-        if (!any(which))
-          next
-        p[, level] <- p[, level] * fitted[[i]][, which]
+    v <- matrix(0, nrow(newdata), length(response.levels))
+    colnames(v) <- colnames(p) <- response.levels
+
+    # explanation of indices:
+
+    #  k: indexes the m categories of the response
+    #  j: indexes the subset of all m - 1 dichotomy models used for
+    #     fitted probabilities for a particular category k
+    #     of the response
+    #  jp: like j, but also excludes current value of j
+
+    for (k in response.levels) {
+
+      for (j in seq_along(models(object))) {
+
+        deriv <- rep(1, nrow(newdata))
+
+        which.j <- sapply(models(object, j)$dichotomy, function(x) k %in% x)
+        if (!any(which.j)) next
+
+        for (jp in seq_along(models(object))){
+          which.jp <- sapply(models(object, jp)$dichotomy, function(x) k %in% x)
+          if (j == jp || !any(which.jp)) next
+          deriv <- deriv * fitted[[jp]][, which.jp]
+        }
+
+        p[, k] <- p[, k] * fitted[[j]][, which.j]
+        v[, k] <- v[, k] + deriv^2 * var.fitted[[j]]
       }
     }
-    rownames(p) <- rownames(newdata)
-    return(p)
+
+    logit <- log(p/(1 - p))
+    v.logit <- (1/(p*(1 - p)))^2 * v
+    rownames(v.logit) <- rownames(v) <- rownames(logit) <- rownames(p) <- rownames(newdata)
+    result <- list(p = as.data.frame(p), logit = as.data.frame(logit),
+                   se.p = as.data.frame(sqrt(v)), se.logit = as.data.frame(sqrt(v.logit)))
+    class(result) <- "predictNestedLogit"
+    return(result)
+
   } else {
-    result <- lapply(models(object), predict, newdata=newdata, ...)
+    result <- lapply(models(object),
+                     function(x) as.data.frame(predict(x, newdata=newdata, se.fit=TRUE, ...)))
     attr(result, "model") <- deparse(substitute(object))
     class(result) <- "predictDichotomies"
     return(result)
@@ -216,12 +259,82 @@ predict.nestedLogit <- function(object, newdata, model=c("nested", "dichotomies"
 
 #' @rdname nestedMethods
 #' @export
-print.predictDichotomies <- function(x, ...){
-  cat("\n predictions for binary logit models from nested logit model:",
-      attr(x, "model"))
-  cat("\n for responses:", paste(names(x), sep=", "))
-  cat(paste0("\n access via $", names(x)[1], " etc."))
+print.predictNestedLogit <- function(x, n=min(10L, nrow(x$p)), ...){
+  if (n == "all") n <- nrow(x$p)
+  if (truncate <- nrow(x$p) > n) cat(paste0("\nFirst ", n, " of ", nrow(x$p), " rows:\n"))
+  cat("\npredicted response-category probabilties\n")
+  print(x$p[1:n, ], ...)
+  if (truncate) cat("  . . .\n")
+  cat("\npredicted response-category logits\n")
+  print(x$logit[1:n, ], ...)
+  if (truncate) cat("  . . .\n")
+  cat("\nstandard errors of predicted probabilities\n")
+  print(x$se.p[1:n, ], ...)
+  if (truncate) cat("  . . .\n")
+  cat("\nstandard errors of predicted logits\n")
+  print(x$se.logit[1:n, ], ...)
+  if (truncate) cat("  . . .\n")
+  invisible(x)
 }
+
+#' @importFrom stats confint qnorm
+#' @rdname nestedMethods
+#' @export
+confint.predictNestedLogit <- function (object, parm=c("prob", "logit"),
+                                        level=0.95, conf.limits.logit=TRUE, ...) {
+  parm <- match.arg(parm)
+  if (parm == "logit"){
+    logit <- object$"logit"
+    se <- object$"se.logit"
+    z <- qnorm(1 - (1 - level)/2)
+    lower <- logit - z*se
+    upper <- logit + z*se
+    result <- cbind(logit, lower, upper)
+    cnames.1 <- colnames(logit)
+    cnames.2 <- c("logit", round((1 - level)/2, 4),
+                  round(1 - (1 - level)/2, 4))
+    cnames <- paste0(cnames.1, ".", rep(cnames.2, each=ncol(logit)))
+    colnames(result) <- cnames
+    return(as.data.frame(result))
+  } else {
+    if (conf.limits.logit){
+      p <- object$"p"
+      logit <- object$"logit"
+      se <- object$"se.logit"
+      z <- qnorm(1 - (1 - level)/2)
+      lower <- 1/(1 + exp(-(logit - z*se)))
+      upper <- 1/(1 + exp(-(logit + z*se)))
+    } else {
+      p <- object$"p"
+      se <- object$"se.p"
+      z <- qnorm(1 - (1 - level)/2)
+      lower <- p - z*se
+      upper <- p + z*se
+    }
+    result <- cbind(p, lower, upper)
+    cnames.1 <- colnames(p)
+    cnames.2 <- c("p", round((1 - level)/2, 4),
+                  round(1 - (1 - level)/2, 4))
+    cnames <- paste0(cnames.1, ".", rep(cnames.2, each=ncol(p)))
+    colnames(result) <- cnames
+    return(as.data.frame(result))
+  }
+}
+
+#' @rdname nestedMethods
+#' @export
+print.predictDichotomies <- function(x, n=10L, ...){
+  cat("\n predictions for binary logit models from nested logit model:",
+      attr(x, "model"), "\n")
+  nms <- names(x)
+  for (i in seq_along(x)){
+    if (n == "all") n <- nrow(x[[i]])
+    cat("\n dichotomy:", nms[i], "\n")
+    print(x[[i]][1:min(n, nrow(x[[i]])), ])
+  }
+  invisible(x)
+}
+
 
 #' @rdname nestedMethods
 #' @importFrom stats fitted
@@ -319,7 +432,7 @@ as.character.dichotomies <- function(x, ...) {
   for (i in seq_along(x)) {
     result <- paste0(result,
                      names(x[i]), " = ",
-                     "{", 
+                     "{",
                      names(x[[i]][1L]),
                      "{",
                      paste(x[[i]][[1L]], collapse = " "),
